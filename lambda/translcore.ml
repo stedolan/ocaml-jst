@@ -112,7 +112,7 @@ let transl_apply_position position =
   | Nontail -> Rc_nontail
   | Tail ->
     if Config.stack_allocation then Rc_close_at_apply
-    else Rc_normal
+    else Rc_tail
 
 let may_allocate_in_region lam =
   let rec loop = function
@@ -929,6 +929,7 @@ and transl_apply ~scopes
       ?(mode=alloc_heap)
       lam sargs loc
   =
+  (* FIXME: Rc_tail where? *)
   let lapply funct args loc pos mode =
     match funct, pos with
     | Lsend((Self | Public) as k, lmet, lobj, [], _, _, _), _ ->

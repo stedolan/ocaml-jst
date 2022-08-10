@@ -1495,6 +1495,117 @@ let transl_all_functions cont =
   in
   translated_functions @ cont
 
+(* Tailcall analysis *)
+type tailcall_type = Direct of function_label * Lambda.region_close | Indirect
+let iter_tailcalls fundecl f =
+  let rec go = function
+    | Cop (Capply (_,k), Cconst_symbol (lbl, _) :: _, dbg) ->
+       f dbg (Direct (lbl,k))
+    | Cop (Capply _, _, dbg) ->
+       f dbg Indirect
+    | Ctrywith (_, _, handler, _) ->
+       (* do not count the body as tail *)
+       go handler 
+    | e -> ignore (Cmm.iter_shallow_tail go e)
+  in
+  go fundecl.fun_body
+
+type scc_state = {
+  index : int;
+  fundecl : fundecl;
+  mutable lowlink : int;
+  mutable on_stack : bool;
+  mutable selfs : (string * Lambda.region_close * Debuginfo.t) list;
+}
+  
+let analyse_tailcalls phrases =
+  let functions =
+    List.filter_map (function Cfunction f -> Some f | Cdata _ -> None) phrases
+  in
+  let fundefs : (string, fundecl) Hashtbl.t = Hashtbl.create 16 in
+  functions |> List.iter (fun f -> Hashtbl.add fundefs f.fun_name f);
+
+  let found_scc comps =
+    if Sys.getenv_opt "DUMP" <> None then begin
+    comps |> List.iter (fun c ->
+      c.selfs |> List.iter (fun (s,k,dbg) ->
+        match k with
+        | Rc_tail | Rc_close_at_apply -> ()
+        | Rc_normal | Rc_nontail ->
+           (* FIXME: Rc_nontail? Can that even happen? *)
+           (*Location.prerr_warning (Debuginfo.to_location (List.rev dbg)) Warnings.Not_a_tailcall*)
+           Printf.printf "%s --> %s @ %s\n" c.fundecl.fun_name s (Debuginfo.to_string dbg)
+
+))
+      end
+  in
+
+  let next_index = ref 0 in
+  let visited : (string, scc_state) Hashtbl.t = Hashtbl.create 16 in
+  let stack = ref [] in
+  let push_new v =
+    assert (not (Hashtbl.mem visited v));
+    let st = {
+      index = !next_index;
+      fundecl = Hashtbl.find fundefs v;
+      lowlink = !next_index;
+      on_stack = true;
+      selfs = []
+    } in
+    incr next_index;
+    stack := st :: !stack;
+    Hashtbl.add visited v st;
+    st
+  in
+  let pop () =
+    match !stack with
+    | [] -> assert false
+    | st :: rest ->
+       stack := rest;
+       assert st.on_stack;
+       st.on_stack <- false;
+       st
+  in
+
+  let rec visit v =
+    let sv = push_new v in
+    iter_tailcalls sv.fundecl (fun dbg tc ->
+      match tc with
+      | Indirect -> () (* FIXME track *)
+      | Direct (w,kind) ->
+         if Hashtbl.mem fundefs w then begin
+           match Hashtbl.find visited w with
+           | exception Not_found ->
+              let sw = visit w in
+              sv.lowlink <- min sv.lowlink sw.lowlink;
+              if sw.lowlink <> sw.index then
+                sv.selfs <- (w,kind,dbg) :: sv.selfs
+           | sw ->
+              if sw.on_stack then begin
+                sv.lowlink <- min sv.lowlink sw.index;
+                sv.selfs <- (w,kind,dbg) :: sv.selfs
+              end
+         end else begin
+           (* FIXME check cmx for indirect calls *)
+           ()
+         end);
+    if sv.lowlink = sv.index then begin
+      let rec collect acc =
+        let sw = pop () in
+        let acc = sw :: acc in
+        if sw == sv then acc else collect acc
+      in
+      found_scc (collect [])
+    end;
+    sv
+  in
+
+  let maybe_visit v =
+    try Hashtbl.find visited v
+    with Not_found -> visit v
+  in
+  functions |> List.iter (fun v -> ignore (maybe_visit v.fun_name))
+
 (* Translate a compilation unit *)
 
 let compunit (ulam, preallocated_blocks, constants) =
@@ -1522,6 +1633,7 @@ let compunit (ulam, preallocated_blocks, constants) =
                        fun_dbg  = Debuginfo.none }] in
   let c2 = transl_clambda_constants constants c1 in
   let c3 = transl_all_functions c2 in
+  analyse_tailcalls c3;
   Cmmgen_state.set_structured_constants [];
   let c4 = emit_preallocated_blocks preallocated_blocks c3 in
   emit_cmm_data_items_for_constants c4

@@ -597,8 +597,9 @@ let apply_kind name pos mode =
   let name =
     match pos with
     | Rc_normal -> name
+    | Rc_tail -> name ^ "tail"
     | Rc_nontail -> name ^ "nontail"
-    | Rc_close_at_apply -> name ^ "tail"
+    | Rc_close_at_apply -> name ^ "rctail"
   in
   name ^ alloc_kind mode
 

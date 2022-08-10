@@ -66,6 +66,7 @@ type field_read_semantics =
 (* Tail calls can close their enclosing region early *)
 type region_close =
   | Rc_normal         (* do not close region, may TCO if in tail position *)
+  | Rc_tail           (* do not close region, must TCO *)
   | Rc_nontail        (* do not close region, must not TCO *)
   | Rc_close_at_apply (* close region and tail call *)
 

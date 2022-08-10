@@ -225,9 +225,10 @@ let simplify_exits lam =
   | Lprim(p, ll, loc) -> begin
     let ll = List.map simplif ll in
     match p, ll with
+    (* FIXME: Rc_tail here? *)
         (* Simplify %revapply, for n-ary functions with n > 1 *)
-      | Prevapply ((Rc_normal | Rc_nontail) as pos), [x; Lapply ap]
-      | Prevapply ((Rc_normal | Rc_nontail) as pos),
+      | Prevapply ((Rc_normal | Rc_tail | Rc_nontail) as pos), [x; Lapply ap]
+      | Prevapply ((Rc_normal | Rc_tail | Rc_nontail) as pos),
         [x; Levent (Lapply ap,_)] ->
           Lapply {ap with ap_args = ap.ap_args @ [x]; ap_loc = loc;
                           ap_region_close = pos}
@@ -244,8 +245,8 @@ let simplify_exits lam =
             ap_probe=None;
           }
         (* Simplify %apply, for n-ary functions with n > 1 *)
-      | Pdirapply ((Rc_normal | Rc_nontail) as pos), [Lapply ap; x]
-      | Pdirapply ((Rc_normal | Rc_nontail) as pos),
+      | Pdirapply ((Rc_normal | Rc_tail | Rc_nontail) as pos), [Lapply ap; x]
+      | Pdirapply ((Rc_normal | Rc_tail | Rc_nontail) as pos),
         [Levent (Lapply ap,_); x] ->
           Lapply {ap with ap_args = ap.ap_args @ [x];
                           ap_loc = loc; ap_region_close=pos}
@@ -794,7 +795,7 @@ let split_default_wrapper ~id:fun_id ~kind ~params ~return ~body
             ap_func = Lvar inner_id;
             ap_args = args;
             ap_loc = Loc_unknown;
-            ap_region_close = Rc_normal;
+            ap_region_close = Rc_tail;
             ap_mode = alloc_heap;
             ap_tailcall = Default_tailcall;
             ap_inlined = Default_inlined;
@@ -910,7 +911,7 @@ let simplify_local_functions lam =
     | Lapply {ap_func = Lvar id; ap_args; ap_region_close; _} ->
         let curr_scope =
           match ap_region_close with
-          | Rc_normal | Rc_nontail -> !current_scope
+          | Rc_normal | Rc_tail | Rc_nontail -> !current_scope
           | Rc_close_at_apply -> !current_region_scope
         in
         begin match Hashtbl.find_opt slots id with

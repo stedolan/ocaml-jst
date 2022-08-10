@@ -899,7 +899,7 @@ let direct_apply env fundesc ufunct uargs apxargs pos mode
   | Some(params, body), _  ->
      let body =
        match pos with
-       | Rc_normal | Rc_nontail -> body
+       | Rc_normal | Rc_tail | Rc_nontail -> body
        | Rc_close_at_apply -> tail body
      in
      bind_params env loc fundesc params uargs apxargs ufunct body
@@ -1136,7 +1136,7 @@ let rec close ({ backend; fenv; cenv ; mutable_vars } as env) lam =
           in
           let body =
             match pos with
-            | Rc_normal | Rc_nontail -> body
+            | Rc_normal | Rc_tail | Rc_nontail -> body
             | Rc_close_at_apply -> tail body
           in
           let result =

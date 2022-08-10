@@ -266,7 +266,7 @@ module Make (H : Hashtbl.HashedType) : (S with type data = H.t) = struct
         hashes.(i) <- h;
       end;
     in
-    loop 0
+    loop 0 [@tail]
 
 
   let add t d =

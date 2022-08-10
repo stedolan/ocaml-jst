@@ -514,7 +514,7 @@ let is_immed n = immed_min <= n && n <= immed_max
 
 let is_nontail = function
   | Rc_nontail -> true
-  | Rc_normal | Rc_close_at_apply -> false
+  | Rc_normal | Rc_tail | Rc_close_at_apply -> false
 
 module Storer =
   Switch.Store
