@@ -579,9 +579,12 @@ let subst_debuginfo loc dbg =
     dbg
 
 let rec substitute loc ((backend, fpc) as st) sb rn ulam =
+  let add_renaming id id' sb =
+    V.Map.add (VP.var id) (Uvar (VP.var id'), Value_unknown) sb
+  in
   match ulam with
     Uvar v ->
-      begin try V.Map.find v sb with Not_found -> ulam end
+      begin try fst (V.Map.find v sb) with Not_found -> ulam end
   | Uconst _ -> ulam
   | Udirect_apply(lbl, args, probe, kind, dbg) ->
       let dbg = subst_debuginfo loc dbg in
@@ -589,8 +592,24 @@ let rec substitute loc ((backend, fpc) as st) sb rn ulam =
                     probe, kind, dbg)
   | Ugeneric_apply(fn, args, kind, dbg) ->
       let dbg = subst_debuginfo loc dbg in
-      Ugeneric_apply(substitute loc st sb rn fn,
-                     List.map (substitute loc st sb rn) args, kind, dbg)
+      let fundesc =
+        match fn with
+        | Uvar v when V.Map.mem v sb ->
+          (match V.Map.find v sb with
+           | _, Value_closure (_, fundesc, _) -> Some fundesc
+           | _ -> None)
+        | _ -> None
+      in
+      let fn = substitute loc st sb rn fn in
+      let args = List.map (substitute loc st sb rn) args in
+      begin match fundesc with
+      | Some ({ fun_arity = Curried _, nargs } as fundesc)
+        when nargs = List.length args ->
+        let args = if fundesc.fun_closed then args else args @ [fn] in
+        Udirect_apply (fundesc.fun_label, args, None, kind, dbg)
+      | _ ->
+        Ugeneric_apply (fn, args, kind, dbg)
+      end
   | Uclosure(defs, env) ->
       (* Question: should we rename function labels as well?  Otherwise,
          there is a risk that function labels are not globally unique.
@@ -605,17 +624,16 @@ let rec substitute loc ((backend, fpc) as st) sb rn ulam =
   | Ulet(str, kind, id, u1, u2) ->
       let id' = VP.rename id in
       Ulet(str, kind, id', substitute loc st sb rn u1,
-           substitute loc st
-             (V.Map.add (VP.var id) (Uvar (VP.var id')) sb) rn u2)
+           substitute loc st (add_renaming id id' sb) rn u2)
   | Uphantom_let _ -> no_phantom_lets ()
   | Uletrec(bindings, body) ->
       let bindings1 =
         List.map (fun (id, rhs) ->
-          (VP.var id, VP.rename id, rhs)) bindings
+          (id, VP.rename id, rhs)) bindings
       in
       let sb' =
         List.fold_right (fun (id, id', _) s ->
-            V.Map.add id (Uvar (VP.var id')) s)
+            add_renaming id id' s)
           bindings1 sb
       in
       Uletrec(
@@ -683,9 +701,7 @@ let rec substitute loc ((backend, fpc) as st) sb rn ulam =
       let ids' = List.map (fun (id, k) -> VP.rename id, k) ids in
       let sb' =
         List.fold_right2
-          (fun (id, _) (id', _) s ->
-             V.Map.add (VP.var id) (Uvar (VP.var id')) s
-          )
+          (fun (id, _) (id', _) s -> add_renaming id id' s)
           ids ids' sb
       in
       Ucatch(nfail, ids', substitute loc st sb rn u1,
@@ -693,8 +709,7 @@ let rec substitute loc ((backend, fpc) as st) sb rn ulam =
   | Utrywith(u1, id, u2) ->
       let id' = VP.rename id in
       Utrywith(substitute loc st sb rn u1, id',
-               substitute loc st
-                 (V.Map.add (VP.var id) (Uvar (VP.var id')) sb) rn u2)
+               substitute loc st (add_renaming id id' sb) rn u2)
   | Uifthenelse(u1, u2, u3) ->
       begin match substitute loc st sb rn u1 with
         Uconst (Uconst_int n) ->
@@ -715,12 +730,11 @@ let rec substitute loc ((backend, fpc) as st) sb rn ulam =
   | Ufor(id, u1, u2, dir, u3) ->
       let id' = VP.rename id in
       Ufor(id', substitute loc st sb rn u1, substitute loc st sb rn u2, dir,
-           substitute loc st
-           (V.Map.add (VP.var id) (Uvar (VP.var id')) sb) rn u3)
+           substitute loc st (add_renaming id id' sb) rn u3)
   | Uassign(id, u) ->
       let id' =
         try
-          match V.Map.find id sb with Uvar i -> i | _ -> assert false
+          match V.Map.find id sb with Uvar i, _ -> i | _ -> assert false
         with Not_found ->
           id in
       Uassign(id', substitute loc st sb rn u)
@@ -775,15 +789,16 @@ let is_erasable = function
   | Uclosure _ -> true
   | u -> is_pure u
 
-let bind_params { backend; mutable_vars; _ } loc fdesc params args funct body =
+let bind_params { backend; mutable_vars; _ } loc fdesc
+      params args apxargs funct body =
   let fpc = fdesc.fun_float_const_prop in
-  let rec aux subst pl al body =
-    match (pl, al) with
-      ([], []) -> substitute (Debuginfo.from_location loc) (backend, fpc)
+  let rec aux subst pl al apxl body =
+    match (pl, al, apxl) with
+      ([], [], []) -> substitute (Debuginfo.from_location loc) (backend, fpc)
                     subst (Some Int.Map.empty) body
-    | (p1 :: pl, a1 :: al) ->
+    | (p1 :: pl, a1 :: al, apx1 :: apxl) ->
         if is_substituable ~mutable_vars a1 then
-          aux (V.Map.add (VP.var p1) a1 subst) pl al body
+          aux (V.Map.add (VP.var p1) (a1,apx1) subst) pl al apxl body
         else begin
           let p1' = VP.rename p1 in
           let u1, u2 =
@@ -795,26 +810,29 @@ let bind_params { backend; mutable_vars; _ } loc fdesc params args funct body =
             | _ ->
                 a1, Uvar (VP.var p1')
           in
-          let body' = aux (V.Map.add (VP.var p1) u2 subst) pl al body in
+          let body' = aux (V.Map.add (VP.var p1) (u2,apx1) subst) pl al apxl body in
           if occurs_var (VP.var p1) body then
             Ulet(Immutable, Pgenval, p1', u1, body')
           else if is_erasable a1 then body'
           else Usequence(a1, body')
         end
-    | (_, _) -> assert false
+    | (_, _, _) -> assert false
   in
   (* Reverse parameters and arguments to preserve right-to-left
      evaluation order (PR#2910). *)
-  let params, args = List.rev params, List.rev args in
-  let params, args, body =
+  let params, args, apxargs =
+    List.rev params, List.rev args, List.rev apxargs in
+  let params, args, apxargs, body =
     (* Ensure funct is evaluated after args *)
     match params with
     | my_closure :: params when not fdesc.fun_closed ->
-       (params @ [my_closure]), (args @ [funct]), body
+       (params @ [my_closure]), (args @ [funct]), (apxargs @ [Value_unknown]),
+       body
     | _ ->
-       params, args, (if is_pure funct then body else Usequence (funct, body))
+       params, args, apxargs,
+       (if is_pure funct then body else Usequence (funct, body))
   in
-  aux V.Map.empty params args body
+  aux V.Map.empty params args apxargs body
 
 (* Check if a lambda term is ``pure'',
    that is without side-effects *and* not containing function definitions *)
@@ -832,7 +850,8 @@ let fail_if_probe ~probe msg =
 
 (* Generate a direct application *)
 
-let direct_apply env fundesc ufunct uargs pos mode ~probe ~loc ~attribute =
+let direct_apply env fundesc ufunct uargs apxargs pos mode
+      ~probe ~loc ~attribute =
   match fundesc.fun_inline, attribute with
   | _, Never_inlined
   | None, _ ->
@@ -883,7 +902,7 @@ let direct_apply env fundesc ufunct uargs pos mode ~probe ~loc ~attribute =
        | Rc_normal | Rc_nontail -> body
        | Rc_close_at_apply -> tail body
      in
-     bind_params env loc fundesc params uargs ufunct body
+     bind_params env loc fundesc params uargs apxargs ufunct body
 
 (* Add [Value_integer] info to the approximation of an application *)
 
@@ -998,29 +1017,34 @@ let rec close ({ backend; fenv; cenv ; mutable_vars } as env) lam =
         Misc.fatal_errorf "Closure: 0-ary application at %a"
           Location.print_loc (Debuginfo.Scoped_location.to_location loc);
       assert (nargs > 0);
-      begin match (close env funct, close_list env args) with
+      begin match (close env funct, close_list_approx env args) with
         ((ufunct, Value_closure(_,
                                 ({fun_arity=(Tupled, nparams)} as fundesc),
                                 approx_res)),
-         [Uprim(P.Pmakeblock _, uargs, _)])
+         ([Uprim(P.Pmakeblock _, uargs, _)], apxargs))
         when List.length uargs = nparams ->
+          let apxargs =
+            match apxargs with
+            | [Value_tuple (_, apx)] -> Array.to_list apx
+            | _ -> List.map (fun _ -> Value_unknown) uargs
+          in
           let app =
-            direct_apply env ~loc ~attribute fundesc ufunct uargs
+            direct_apply env ~loc ~attribute fundesc ufunct uargs apxargs
               pos mode ~probe in
           (app, strengthen_approx app approx_res)
       | ((ufunct, Value_closure(_,
                                 ({fun_arity=(Curried _, nparams)} as fundesc),
-                                approx_res)), uargs)
+                                approx_res)), (uargs, apxargs))
         when nargs = nparams ->
           let app =
-            direct_apply env ~loc ~attribute fundesc ufunct uargs
+            direct_apply env ~loc ~attribute fundesc ufunct uargs apxargs
               pos mode ~probe in
           (app, strengthen_approx app approx_res)
 
       | ((ufunct, (Value_closure(
             clos_mode,
             ({fun_arity=(Curried {nlocal}, nparams)} as fundesc),
-            _) as fapprox)), uargs)
+            _) as fapprox)), (uargs, _))
           when nargs < nparams ->
         let first_args = List.map (fun arg ->
           (V.create_local "arg", arg) ) uargs in
@@ -1087,7 +1111,7 @@ let rec close ({ backend; fenv; cenv ; mutable_vars } as env) lam =
         (new_fun, approx)
 
       | ((ufunct, Value_closure(_, ({fun_arity = (Curried _, nparams)} as fundesc),
-                                _approx_res)), uargs)
+                                _approx_res)), (uargs, _))
         when nargs > nparams ->
           let args = List.map (fun arg -> V.create_local "arg", arg) uargs in
           let (first_args, rem_args) = split_list nparams args in
@@ -1100,6 +1124,7 @@ let rec close ({ backend; fenv; cenv ; mutable_vars } as env) lam =
           let body =
             Ugeneric_apply(direct_apply env ~loc ~attribute
                               fundesc ufunct first_args
+                              (List.map (fun _ -> Value_unknown) first_args)
                               Rc_normal mode'
                               ~probe,
                            rem_args, (Rc_normal, mode), dbg)
@@ -1121,7 +1146,7 @@ let rec close ({ backend; fenv; cenv ; mutable_vars } as env) lam =
               args
           in
           result, Value_unknown
-      | ((ufunct, _), uargs) ->
+      | ((ufunct, _), (uargs, _)) ->
           let dbg = Debuginfo.from_location loc in
           warning_if_forced_inlined ~loc ~attribute "Unknown function";
           fail_if_probe ~probe "Unknown function";
@@ -1169,8 +1194,8 @@ let rec close ({ backend; fenv; cenv ; mutable_vars } as env) lam =
           close { backend; fenv = fenv_body; cenv; mutable_vars } body in
         let sb =
           List.fold_right
-            (fun (id, pos, _approx) sb ->
-              V.Map.add id (Uoffset(Uvar clos_ident, pos)) sb)
+            (fun (id, pos, approx) sb ->
+              V.Map.add id (Uoffset(Uvar clos_ident, pos), approx) sb)
             infos V.Map.empty in
         (Ulet(Immutable, Pgenval, VP.create clos_ident, clos,
               substitute Debuginfo.none (backend, !Clflags.float_const_prop) sb
