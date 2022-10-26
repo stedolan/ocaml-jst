@@ -1243,21 +1243,6 @@ let foo () =
 val foo : unit -> int = <fun>
 |}]
 
-(* Cannot use TMC on local-returning functions *)
-let[@tail_mod_cons] rec copy_list (local_ li) = local_
-  match li with
-  | [] -> []
-  | x :: xs -> x :: copy_list xs
-[%%expect{|
-Lines 1-4, characters 34-32:
-1 | ..................................(local_ li) = local_
-2 |   match li with
-3 |   | [] -> []
-4 |   | x :: xs -> x :: copy_list xs
-Error: [@tail_mod_cons]: Functions cannot be both local-returning and [@tail_mod_cons]
-|}]
-
-
 (* Parameter modes must be matched by the type *)
 
 let foo : 'a -> unit = fun (local_ x) -> ()
