@@ -36,6 +36,7 @@ type ambiguous_arguments = {
 
 type error =
   | Ambiguous_constructor_arguments of ambiguous_arguments
+  | Tmc_without_region
 
 exception Error of Location.t * error
 
@@ -557,7 +558,11 @@ let llets lk vk bindings body =
   ) bindings body
 
 let find_candidate = function
-  | Lfunction lfun when lfun.attr.tmc_candidate -> Some lfun
+  | Lfunction lfun when lfun.attr.tmc_candidate ->
+     if not lfun.region then
+       raise (Error (Debuginfo.Scoped_location.to_location lfun.loc,
+                     Tmc_without_region));
+     Some lfun
   | _ -> None
 
 let declare_binding ctx (var, def) =
@@ -1032,6 +1037,10 @@ let () =
             |> List.map sub
           in
           Some (Location.errorf ~loc ~sub:submgs "%t" print_msg)
+      | Error (loc, Tmc_without_region) ->
+          Some (Location.errorf ~loc
+                  "[@tail_mod_cons]: Functions cannot be both local-returning \
+                   and [@tail_mod_cons]")
       | _ ->
         None
     )
