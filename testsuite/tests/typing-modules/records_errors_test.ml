@@ -391,7 +391,7 @@ Error: Signature mismatch:
          x : 'x;
        is not the same as:
          x : 'a;
-       The type 'a is not equal to the type 'x
+       The type 'x is not equal to the type 'a
 |}]
 
 
