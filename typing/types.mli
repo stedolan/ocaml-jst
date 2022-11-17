@@ -149,6 +149,11 @@ and alloc_mode =
   | Amode of alloc_mode_const
   | Amodevar of alloc_mode_var
 
+(** Whether a function may locally allocate values in its caller's region *)
+and region_return =
+  | May_alloc_in_caller
+  | No_alloc_in_caller
+
 and fixed_explanation =
   | Univar of type_expr (** The row type was bound to an univar *)
   | Fixed_private (** The row type is private *)

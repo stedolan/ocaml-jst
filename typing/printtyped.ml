@@ -358,7 +358,10 @@ and expression i ppf x =
       expression i ppf e;
   | Texp_function { arg_label = p; param = _; cases; partial = _; region } ->
       line i ppf "Texp_function\n";
-      line i ppf "region %b\n" region;
+      begin match region with
+      | May_alloc_in_caller ->
+        line i ppf "May_alloc_in_caller"
+      | No_alloc_in_caller -> () end;
       arg_label i ppf p;
       list i case ppf cases;
   | Texp_apply (e, l, m) ->

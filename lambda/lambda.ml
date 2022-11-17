@@ -426,7 +426,7 @@ type lambda =
   | Lassign of Ident.t * lambda
   | Lsend of
       meth_kind * lambda * lambda * lambda list
-      * region_close * alloc_mode * scoped_location
+      * region_close * Types.region_return * scoped_location
   | Levent of lambda * lambda_event
   | Lifused of Ident.t * lambda
   | Lregion of lambda
@@ -439,13 +439,13 @@ and lfunction =
     attr: function_attribute; (* specified with [@inline] attribute *)
     loc: scoped_location;
     mode: alloc_mode;
-    region: bool; }
+    region: Types.region_return; }
 
 and lambda_while =
   { wh_cond : lambda;
-    wh_cond_region : bool;
+    wh_cond_region : Types.region_return;
     wh_body : lambda;
-    wh_body_region : bool
+    wh_body_region : Types.region_return
   }
 
 and lambda_for =
@@ -454,14 +454,14 @@ and lambda_for =
     for_to : lambda;
     for_dir : direction_flag;
     for_body : lambda;
-    for_region : bool;
+    for_region : Types.region_return;
   }
 
 and lambda_apply =
   { ap_func : lambda;
     ap_args : lambda list;
     ap_region_close : region_close;
-    ap_mode : alloc_mode;
+    ap_mode : Types.region_return;
     ap_loc : scoped_location;
     ap_tailcall : tailcall_attribute;
     ap_inlined : inlined_attribute;
@@ -524,7 +524,10 @@ let lfunction ~kind ~params ~return ~body ~attr ~loc ~mode ~region =
      let nparams = List.length params in
      assert (0 <= nlocal);
      assert (nlocal <= nparams);
-     if not region then assert (nlocal >= 1);
+     begin match region with
+     | Types.May_alloc_in_caller -> assert (nlocal >= 1)
+     | Types.No_alloc_in_caller -> ()
+     end;
      if is_local_mode mode then assert (nlocal = nparams)
   end;
   Lfunction { kind; params; return; body; attr; loc; mode; region }

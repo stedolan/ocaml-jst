@@ -560,10 +560,13 @@ let llets lk vk bindings body =
 let find_candidate = function
   | Lfunction lfun when lfun.attr.tmc_candidate ->
      (* TMC does not make sense for local-returning functions *)
-     if not lfun.region then
+    begin match lfun.region with
+    | May_alloc_in_caller ->
        raise (Error (Debuginfo.Scoped_location.to_location lfun.loc,
-                     Tmc_without_region));
-     Some lfun
+                     Tmc_without_region))
+    | No_alloc_in_caller ->
+      Some lfun
+    end
   | _ -> None
 
 let declare_binding ctx (var, def) =
@@ -710,9 +713,10 @@ let rec choice ctx t =
             then Tailcall_expectation true
             else Default_tailcall
           in
-          (* This application is in tail position of a region=true function
-             (or Tmc_without_region would have occurred), so it must be Heap *)
-          assert (Lambda.is_heap_mode apply.ap_mode);
+          (* This application is in tail position of a No_alloc_in_caller
+             function (or Tmc_without_region would have occurred), so it
+             must be the same *)
+          assert (apply.ap_mode = Types.No_alloc_in_caller);
           {
             Choice.dps = Dps.make (fun ~tail ~dst ->
               Lapply { apply with
@@ -990,7 +994,7 @@ and traverse_binding outer_ctx inner_ctx (var, def) =
       ~attr:lfun.attr
       ~loc:lfun.loc
       ~mode:lfun.mode
-      ~region:true
+      ~region:No_alloc_in_caller
   in
   let dps_var = special.dps_id in
   [(var, direct); (dps_var, dps)]

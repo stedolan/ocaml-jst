@@ -110,7 +110,7 @@ and expression_desc =
   | Texp_let of rec_flag * value_binding list * expression
   | Texp_function of { arg_label : arg_label; param : Ident.t;
       cases : value case list; partial : partial;
-      region : bool; curry : fun_curry_state;
+      region : Types.region_return; curry : fun_curry_state;
       warnings : Warnings.state; }
   | Texp_apply of expression * (arg_label * apply_arg) list * apply_position
   | Texp_match of expression * computation case list * partial
@@ -132,9 +132,9 @@ and expression_desc =
   | Texp_sequence of expression * expression
   | Texp_while of {
       wh_cond : expression;
-      wh_cond_region : bool;
+      wh_cond_region : region_return;
       wh_body : expression;
-      wh_body_region : bool
+      wh_body_region : region_return;
     }
   | Texp_list_comprehension of
       expression * comprehension list
@@ -147,7 +147,7 @@ and expression_desc =
       for_to   : expression;
       for_dir  : direction_flag;
       for_body : expression;
-      for_region : bool;
+      for_region : region_return;
     }
   | Texp_send of expression * meth * apply_position
   | Texp_new of

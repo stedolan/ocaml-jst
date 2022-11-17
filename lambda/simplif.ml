@@ -526,7 +526,7 @@ let simplify_lets lam =
               attr; loc; mode; region=outer_region} ->
       begin match outer_kind, outer_region, simplif l with
         Curried {nlocal=0},
-        true,
+        No_alloc_in_caller,
         Lfunction{kind=Curried _ as kind; params=params'; return=return2;
                   body; attr; loc; mode=inner_mode; region}
         when optimize &&
@@ -777,7 +777,7 @@ let split_default_wrapper ~id:fun_id ~kind ~params ~return ~body
             ap_args = args;
             ap_loc = Loc_unknown;
             ap_region_close = Rc_normal;
-            ap_mode = alloc_heap;
+            ap_mode = No_alloc_in_caller;
             ap_tailcall = Default_tailcall;
             ap_inlined = Default_inlined;
             ap_specialised = Default_specialise;
@@ -796,7 +796,7 @@ let split_default_wrapper ~id:fun_id ~kind ~params ~return ~body
         let inner_fun =
           lfunction ~kind:(Curried {nlocal=0})
             ~params:(List.map (fun id -> id, Pgenval) new_ids)
-            ~return ~body ~attr ~loc ~mode ~region:true
+            ~return ~body ~attr ~loc ~mode ~region:No_alloc_in_caller
         in
         (wrapper_body, (inner_id, inner_fun))
   in
@@ -804,12 +804,14 @@ let split_default_wrapper ~id:fun_id ~kind ~params ~return ~body
     (* TODO: enable this optimisation even in the presence of local returns *)
     begin match kind with
     | Curried {nlocal} when nlocal > 0 -> raise Exit
-    | Tupled when not orig_region -> raise Exit
-    | _ -> assert orig_region
+    | Tupled when orig_region = Types.May_alloc_in_caller -> raise Exit
+    | _ -> assert (orig_region = Types.No_alloc_in_caller)
     end;
     let body, inner = aux [] false body in
     let attr = default_stub_attribute in
-    [(fun_id, lfunction ~kind ~params ~return ~body ~attr ~loc ~mode ~region:true); inner]
+    [(fun_id,
+      lfunction ~kind ~params ~return ~body ~attr ~loc ~mode ~region:No_alloc_in_caller);
+     inner]
   with Exit ->
     [(fun_id, lfunction ~kind ~params ~return ~body ~attr ~loc ~mode ~region:orig_region)]
 

@@ -196,7 +196,7 @@ and expression_desc =
          *)
   | Texp_function of { arg_label : arg_label; param : Ident.t;
       cases : value case list; partial : partial;
-      region : bool; curry : fun_curry_state;
+      region : Types.region_return; curry : fun_curry_state;
       warnings : Warnings.state; }
         (** [Pexp_fun] and [Pexp_function] both translate to [Texp_function].
             See {!Parsetree} for more details.
@@ -271,9 +271,9 @@ and expression_desc =
   | Texp_sequence of expression * expression
   | Texp_while of {
       wh_cond : expression;
-      wh_cond_region : bool; (* False means allocates in outer region *)
+      wh_cond_region : Types.region_return; (* whether it may allocate in outer region *)
       wh_body : expression;
-      wh_body_region : bool  (* False means allocates in outer region *)
+      wh_body_region : Types.region_return  (* whether it may allocate in outer region *)
     }
   | Texp_list_comprehension of
       expression * comprehension list
@@ -286,9 +286,8 @@ and expression_desc =
       for_to   : expression;
       for_dir  : direction_flag;
       for_body : expression;
-      for_region : bool;
-      (* for_region = true means we create a region for the body.  false means
-         it may allocated in the containing region *)
+      for_region : Types.region_return;
+      (* whether it may allocate in outer region *)
     }
   | Texp_send of expression * meth * apply_position
   | Texp_new of

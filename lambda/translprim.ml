@@ -712,15 +712,15 @@ let lambda_of_prim prim_name prim loc args arg_exps =
       let lam = lambda_of_loc kind loc in
       Lprim(Pmakeblock(0, Immutable, None, alloc_heap), [lam; arg], loc)
   | Send pos, [obj; meth] ->
-      Lsend(Public, meth, obj, [], pos, alloc_heap, loc)
+      Lsend(Public, meth, obj, [], pos, No_alloc_in_caller, loc)
   | Send_self pos, [obj; meth] ->
-      Lsend(Self, meth, obj, [], pos, alloc_heap, loc)
+      Lsend(Self, meth, obj, [], pos, No_alloc_in_caller, loc)
   | Send_cache apos, [obj; meth; cache; pos] ->
       (* Cached mode only works in the native backend *)
       if !Clflags.native_code then
-        Lsend(Cached, meth, obj, [cache; pos], apos, alloc_heap, loc)
+        Lsend(Cached, meth, obj, [cache; pos], apos, No_alloc_in_caller, loc)
       else
-        Lsend(Public, meth, obj, [], apos, alloc_heap, loc)
+        Lsend(Public, meth, obj, [], apos, No_alloc_in_caller, loc)
   | Frame_pointers, [] ->
       let frame_pointers =
         if !Clflags.native_code && Config.with_frame_pointers then 1 else 0
@@ -741,7 +741,7 @@ let lambda_of_prim prim_name prim loc args arg_exps =
         ap_specialised = Default_specialise;
         ap_probe = None;
         ap_region_close = pos;
-        ap_mode = alloc_heap;
+        ap_mode = No_alloc_in_caller;
       }
   | (Raise _ | Raise_with_backtrace
     | Lazy_force _ | Loc _ | Primitive _ | Sys_argv | Comparison _
@@ -806,12 +806,13 @@ let transl_primitive loc p env ty ~poly_mode path =
      let arg_modes = List.map to_alloc_mode p.prim_native_repr_args in
      let region =
        match to_alloc_mode p.prim_native_repr_res with
-       | Alloc_heap -> true
-       | Alloc_local -> false
+       | Alloc_heap -> No_alloc_in_caller
+       | Alloc_local -> May_alloc_in_caller
      in
      let rec count_nlocal = function
        | [] -> assert false
-       | [_] -> if region then 0 else 1
+       | [_] ->
+         (match region with May_alloc_in_caller -> 1 | No_alloc_in_caller -> 0)
        | Alloc_heap :: args -> count_nlocal args
        | (Alloc_local :: _) as args -> List.length args
      in

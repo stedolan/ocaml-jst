@@ -58,6 +58,10 @@ let alloc_mode = function
   | Alloc_heap -> ""
   | Alloc_local -> "local"
 
+let region_return = function
+  | No_alloc_in_caller -> ""
+  | May_alloc_in_caller -> "local"
+
 let boxed_integer_name = function
   | Pnativeint -> "nativeint"
   | Pint32 -> "int32"
@@ -96,9 +100,9 @@ and value_kind' ppf = function
     variant_kind value_kind' ppf ~consts ~non_consts
 
 let return_kind ppf (mode, kind) =
-  let smode = alloc_mode mode in
+  let smode = region_return mode in
   match kind with
-  | Pgenval when is_heap_mode mode -> ()
+  | Pgenval when mode = No_alloc_in_caller -> ()
   | Pgenval -> fprintf ppf ": %s@ " smode
   | Pintval -> fprintf ppf ": int@ "
   | Pfloatval -> fprintf ppf ": %sfloat@ " smode
@@ -615,7 +619,7 @@ let apply_kind name pos mode =
     | Rc_nontail -> name ^ "nontail"
     | Rc_close_at_apply -> name ^ "tail"
   in
-  name ^ alloc_kind mode
+  name ^ region_return mode
 
 let rec lam ppf = function
   | Lvar id ->
@@ -650,10 +654,9 @@ let rec lam ppf = function
                 value_kind ppf k)
               params;
             fprintf ppf ")" in
-      let rmode = if region then alloc_heap else alloc_local in
       fprintf ppf "@[<2>(function%s%a@ %a%a%a)@]"
         (alloc_kind mode) pr_params params
-        function_attribute attr return_kind (rmode, return) lam body
+        function_attribute attr return_kind (region, return) lam body
   | Llet _ | Lmutlet _ as expr ->
       let let_kind = begin function
         | Llet(str,_,_,_,_) ->
@@ -750,16 +753,15 @@ let rec lam ppf = function
   | Lsequence(l1, l2) ->
       fprintf ppf "@[<2>(seq@ %a@ %a)@]" lam l1 sequence l2
   | Lwhile {wh_cond; wh_cond_region; wh_body; wh_body_region} ->
-      let cond_mode = if wh_cond_region then alloc_heap else alloc_local in
-      let body_mode = if wh_body_region then alloc_heap else alloc_local in
       fprintf ppf "@[<2>(while@ %s %a@ %s %a)@]"
-        (alloc_mode cond_mode) lam wh_cond (alloc_mode body_mode) lam wh_body
+        (region_return wh_cond_region) lam wh_cond
+        (region_return wh_body_region) lam wh_body
   | Lfor {for_id; for_from; for_to; for_dir; for_body; for_region} ->
-      let mode = if for_region then alloc_heap else alloc_local in
       fprintf ppf "@[<2>(for %a@ %a@ %s@ %a@ %s %a)@]"
        Ident.print for_id lam for_from
        (match for_dir with Upto -> "to" | Downto -> "downto")
-       lam for_to (alloc_mode mode) lam for_body
+       lam for_to
+       (region_return for_region) lam for_body
   | Lassign(id, expr) ->
       fprintf ppf "@[<2>(assign@ %a@ %a)@]" Ident.print id lam expr
   | Lsend (k, met, obj, largs, pos, reg, _) ->

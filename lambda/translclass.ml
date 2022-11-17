@@ -27,7 +27,7 @@ type error = Tags of label * label
 
 exception Error of Location.t * error
 
-let lfunction ?(kind=Curried {nlocal=0}) ?(region=true) params body =
+let lfunction ?(kind=Curried {nlocal=0}) ?(region=No_alloc_in_caller) params body =
   if params = [] then body else
   match kind, body with
   | Curried {nlocal=0},
@@ -64,7 +64,7 @@ let mkappl (func, args) =
          ap_func=func;
          ap_args=args;
          ap_region_close=Rc_normal;
-         ap_mode=alloc_heap;
+         ap_mode=No_alloc_in_caller;
          ap_tailcall=Default_tailcall;
          ap_inlined=Default_inlined;
          ap_specialised=Default_specialise;
@@ -201,7 +201,7 @@ let rec build_object_init ~scopes cl_table obj params inh_init obj_init cl =
                    ~body:(Matching.for_function ~scopes Pgenval pat.pat_loc
                              None (Lvar param) [pat, rem] partial)
                    ~mode:alloc_heap
-                   ~region:true
+                   ~region:No_alloc_in_caller
        in
        begin match obj_init with
          Lfunction {kind = Curried {nlocal=0}; params; body = rem} ->
@@ -471,7 +471,7 @@ let rec transl_class_rebind ~scopes obj_init cl vf =
                   ~body:(Matching.for_function ~scopes Pgenval pat.pat_loc
                             None (Lvar param) [pat, rem] partial)
                   ~mode:alloc_heap
-                  ~region:true
+                  ~region:No_alloc_in_caller
       in
       (path, path_lam,
        match obj_init with

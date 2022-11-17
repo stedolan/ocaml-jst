@@ -70,7 +70,7 @@ let transl_arr_clause ~transl_exp ~scopes ~loc clause body =
               (Lprim(Parrayrefu(in_kind),
                      [Lvar(in_var); Lvar(index)], loc))
               pat (valuekind_of_arraykind in_kind) body;
-          for_region = true
+          for_region = No_alloc_in_caller
         }
         in
         [in_binding; len_binding], for_
@@ -100,7 +100,7 @@ let transl_arr_clause ~transl_exp ~scopes ~loc clause body =
           for_to = Lvar to_var;
           for_dir = dir;
           for_body = body;
-          for_region = true
+          for_region = No_alloc_in_caller
         }
         in
         [from_binding; to_binding; len_binding], for_
@@ -371,7 +371,7 @@ let concat_arrays ~loc arr kind shape global_count_var =
           for_dir = Upto;
           for_body = Llet(Strict, Pgenval, sub_arr_var, sub_arr,
                           loop shape sub_arr_var None);
-          for_region = true })
+          for_region = No_alloc_in_caller })
     | Array_of_filtered_arrays shape ->
         let index_var = Ident.create_local "index" in
         let index_binding = make_counter index_var in
@@ -389,14 +389,14 @@ let concat_arrays ~loc arr kind shape global_count_var =
             (Lwhile
                {wh_cond = Lprim(Pintcomp Clt, [Lvar index_var; Lvar len_var],
                                 loc);
-                wh_cond_region = true;
+                wh_cond_region = No_alloc_in_caller;
                 wh_body =
                   Lsequence(
                     Llet(Strict, Pgenval, sub_arr_var, sub_arr,
                          Llet(Strict, Pintval, sub_arr_len_var, sub_arr_len,
                               loop shape sub_arr_var (Some sub_arr_len_var))),
                     increment_counter ~loc index_var (int 2));
-                wh_body_region = true}))
+                wh_body_region = No_alloc_in_caller}))
   in
   match arr with
   | Without_size { body } ->
@@ -498,12 +498,12 @@ let transl_list_comp type_comp body acc_var mats ~transl_exp ~scopes ~loc =
       ~loc
       ~body
       ~mode:alloc_heap
-      ~region:true
+      ~region:No_alloc_in_caller
   in
   Lapply{
     ap_loc=loc;
     ap_region_close=Rc_normal;
-    ap_mode=alloc_heap;
+    ap_mode=No_alloc_in_caller;
     ap_func=func;
     ap_args= fn::args;
     ap_tailcall=Default_tailcall;
@@ -547,7 +547,7 @@ let transl_list_comprehension ~transl_exp ~loc ~scopes body blocks =
         ap_func=comp_rev ();
         ap_args=[res_list];
         ap_region_close=Rc_normal;
-        ap_mode=alloc_heap;
+        ap_mode=No_alloc_in_caller;
         ap_tailcall=Default_tailcall;
         ap_inlined=Default_inlined;
         ap_specialised=Default_specialise;

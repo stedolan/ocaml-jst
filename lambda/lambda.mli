@@ -356,7 +356,7 @@ type lambda =
   | Lfor of lambda_for
   | Lassign of Ident.t * lambda
   | Lsend of meth_kind * lambda * lambda * lambda list
-             * region_close * alloc_mode * scoped_location
+             * region_close * Types.region_return * scoped_location
   | Levent of lambda * lambda_event
   | Lifused of Ident.t * lambda
   | Lregion of lambda
@@ -369,17 +369,19 @@ and lfunction = private
     attr: function_attribute; (* specified with [@inline] attribute *)
     loc : scoped_location;
     mode : alloc_mode;     (* alloc mode of the closure itself *)
-    region : bool;         (* false if this function may locally
-                              allocate in the caller's region *)
+    region : Types.region_return; (* whether this function may locally
+                                     allocate in the caller's region *)
   }
 
 and lambda_while =
   { wh_cond : lambda;
-    wh_cond_region : bool; (* false if the condition may locally allocate in
-                              the region containing the loop *)
+    wh_cond_region : Types.region_return;
+    (* whether the condition may locally allocate in
+       the region containing the loop *)
     wh_body : lambda;
-    wh_body_region : bool  (* false if the body may locally allocate in
-                              the region containing the loop *)
+    wh_body_region : Types.region_return;
+    (* whether the body may locally allocate in
+       the region containing the loop *)
   }
 
 and lambda_for =
@@ -388,15 +390,16 @@ and lambda_for =
     for_to : lambda;
     for_dir : direction_flag;
     for_body : lambda;
-    for_region : bool;     (* false if the body may locally allocate in the
-                              region containing the loop *)
+    for_region : Types.region_return;
+    (* whether the body may locally allocate in the
+       region containing the loop *)
   }
 
 and lambda_apply =
   { ap_func : lambda;
     ap_args : lambda list;
     ap_region_close : region_close;
-    ap_mode : alloc_mode;
+    ap_mode : Types.region_return;
     ap_loc : scoped_location;
     ap_tailcall : tailcall_attribute;
     ap_inlined : inlined_attribute; (* [@inlined] attribute in code *)
@@ -459,7 +462,7 @@ val lfunction :
   attr:function_attribute -> (* specified with [@inline] attribute *)
   loc:scoped_location ->
   mode:alloc_mode ->
-  region:bool ->
+  region:Types.region_return ->
   lambda
 
 

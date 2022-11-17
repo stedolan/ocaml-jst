@@ -59,6 +59,10 @@ and alloc_mode =
   | Amode of alloc_mode_const
   | Amodevar of alloc_mode_var
 
+and region_return =
+  | May_alloc_in_caller
+  | No_alloc_in_caller
+
 and row_desc =
     { row_fields: (label * row_field) list;
       row_more: type_expr;

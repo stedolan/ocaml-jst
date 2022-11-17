@@ -4202,16 +4202,16 @@ and type_expect_
         exp_env = env }
   | Pexp_while(scond, sbody) ->
       let cond_env,wh_cond_region =
-        if is_local_returning_expr scond then env, false
-        else Env.add_region_lock env, true
+        if is_local_returning_expr scond then env, May_alloc_in_caller
+        else Env.add_region_lock env, No_alloc_in_caller
       in
       let wh_cond =
         type_expect cond_env (mode_var ()) scond
           (mk_expected ~explanation:While_loop_conditional Predef.type_bool)
       in
       let body_env,wh_body_region =
-        if is_local_returning_expr sbody then env, false
-        else Env.add_region_lock env, true
+        if is_local_returning_expr sbody then env, May_alloc_in_caller
+        else Env.add_region_lock env, No_alloc_in_caller
       in
       let wh_body =
         type_statement ~explanation:While_loop_body body_env sbody
@@ -4237,8 +4237,8 @@ and type_expect_
         type_for_loop_index ~loc ~env ~param Predef.type_int
       in
       let new_env, for_region =
-        if is_local_returning_expr sbody then new_env, false
-        else Env.add_region_lock new_env, true
+        if is_local_returning_expr sbody then new_env, May_alloc_in_caller
+        else Env.add_region_lock new_env, No_alloc_in_caller
       in
       let for_body =
         type_statement ~explanation:For_loop_body new_env sbody
@@ -5115,7 +5115,11 @@ and type_function ?in_function
     Location.prerr_warning (List.hd cases).c_lhs.pat_loc
       Warnings.Unerasable_optional_argument;
   let param = name_cases "param" cases in
-  let region = region_locked && not uncurried_function in
+  let region =
+    if region_locked && not uncurried_function
+    then No_alloc_in_caller
+    else May_alloc_in_caller
+  in
   let warnings = Warnings.backup () in
   re {
     exp_desc =
@@ -5615,7 +5619,8 @@ and type_argument ?explanation ?recarg env (mode : expected_mode) sarg
         let curry = Final_arg {partial_mode} in
         { texp with exp_type = ty_fun; exp_mode = mode.mode;
             exp_desc = Texp_function { arg_label = Nolabel; param; cases;
-                                       partial = Total; region = false; curry;
+                                       partial = Total;
+                                       region = May_alloc_in_caller; curry;
                                        warnings = Warnings.backup () } }
       in
       Location.prerr_warning texp.exp_loc
