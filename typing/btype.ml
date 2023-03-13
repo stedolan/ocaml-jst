@@ -288,7 +288,29 @@ let fold_type_expr f init ty =
     List.fold_left (fun result (_n, ty) -> f result ty) init fl
 
 let iter_type_expr f ty =
-  fold_type_expr (fun () v -> f v) () ty
+  match get_desc ty with
+    Tvar _              -> ()
+  | Tarrow (_, ty1, ty2, _) ->
+      f ty1; f ty2
+  | Ttuple l            -> List.iter f l
+  | Tconstr (_, l, _)   -> List.iter f l
+  | Tobject(ty, {contents = Some (_, p)}) ->
+      f ty;
+      List.iter f p
+  | Tobject (ty, _)     -> f ty
+  | Tvariant row        ->
+      iter_row f row;
+      f (row_more row)
+  | Tfield (_, _, ty1, ty2) ->
+      f ty1; f ty2
+  | Tnil                -> ()
+  | Tlink _
+  | Tsubst _            -> assert false
+  | Tunivar _           -> ()
+  | Tpoly (ty, tyl)     ->
+    f ty; List.iter f tyl
+  | Tpackage (_, fl)  ->
+    List.iter (fun (_n, ty) -> f ty) fl
 
 let rec iter_abbrev f = function
     Mnil                   -> ()

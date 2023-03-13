@@ -24,6 +24,21 @@ open Errortrace
 open Local_store
 module Int = Misc.Stdlib.Int
 
+let counters : (string * int ref) list ref = ref []
+let () =
+  at_exit @@ fun () ->
+  !counters |> List.iter (fun (s, r) ->
+    Printf.printf "%10d %s\n" !r s)
+
+let incr_counter s =
+  match List.assoc s !counters with
+  | r -> incr r
+  | exception Not_found ->
+     counters := (s, ref 1) :: !counters
+
+let _ = incr_counter
+let incr_counter _ = ()
+
 (*
    Type manipulation after type inference
    ======================================
@@ -1521,7 +1536,7 @@ let subst env level priv abbrev oty params args body =
   if List.length params <> List.length args then raise Cannot_subst;
   let old_level = !current_level in
   current_level := level;
-  let body0 = newvar () in          (* Stub *)
+  let body0 = newvar ~name:"subst_stub" () in          (* Stub *)
   let undo_abbrev =
     match oty with
     | None -> fun () -> () (* No abbreviation added *)
@@ -1611,6 +1626,7 @@ let expand_abbrev_gen kind find_type_expansion env ty =
       let lookup_abbrev = proper_abbrevs path args abbrev in
       begin match find_expans kind path !lookup_abbrev with
         Some ty' ->
+          incr_counter "expand_abbrev cached";
           (* prerr_endline
             ("found a "^string_of_kind kind^" expansion for "^Path.name path);*)
           if level <> generic_level then
@@ -1634,11 +1650,20 @@ let expand_abbrev_gen kind find_type_expansion env ty =
       | None ->
           match find_type_expansion path env with
           | exception Not_found ->
+            incr_counter "expand_abbrev none";
             (* another way to expand is to normalize the path itself *)
             let path' = Env.normalize_type_path None env path in
             if Path.same path path' then raise Cannot_expand
             else newty2 ~level (Tconstr (path', args, abbrev))
           | (params, body, lv) ->
+            begin match get_desc body with
+            | Tconstr (_path', args', _) when List.equal eq_type params args' ->
+               incr_counter "expand_abbrev alias";
+            | _ when List.length params = 0 ->
+               incr_counter "expand_abbrev noparams"
+            | _ ->
+               incr_counter "expand_abbrev nontrivial";
+            end;
             (* prerr_endline
               ("add a "^string_of_kind kind^" expansion for "^Path.name path);*)
             let ty' =
@@ -1838,6 +1863,10 @@ let is_contractive env p =
     in_pervasives p && decl.type_manifest = None || is_datatype decl
   with Not_found -> false
 
+let is_fully_injective env p =
+  match Env.find_type p env with
+  | decl -> List.for_all Variance.(fun v -> mem Inj v) decl.type_variance
+  | exception Not_found -> false
 
                               (*****************)
                               (*  Occur check  *)
@@ -1846,7 +1875,27 @@ let is_contractive env p =
 
 exception Occur
 
+let occur_fast env allow_recursive ty0 ty =
+  let rec loop ty =
+    if eq_type ty ty0 then raise Occur;
+    if not_marked_node ty then begin
+      flip_mark_node ty;
+      match get_desc ty with
+      | Tobject _ | Tvariant _ -> ()
+      | Tconstr(p, _, _) ->
+         if allow_recursive && is_contractive env p then ()
+         else iter_type_expr loop ty
+      | _ ->
+         if allow_recursive then ()
+         else iter_type_expr loop ty
+    end
+  in
+  Misc.try_finally
+    (fun () -> loop ty)
+    ~always:(fun () -> unmark_type ty)
+
 let rec occur_rec env allow_recursive visited ty0 ty =
+  incr_counter "occur_rec";
   if eq_type ty ty0 then raise Occur;
   match get_desc ty with
     Tconstr(p, _tl, _abbrev) ->
@@ -1854,12 +1903,11 @@ let rec occur_rec env allow_recursive visited ty0 ty =
       begin try
         if TypeSet.mem ty visited then raise Occur;
         let visited = TypeSet.add ty visited in
-        iter_type_expr (occur_rec env allow_recursive visited ty0) ty
-      with Occur -> try
-        let ty' = try_expand_head try_expand_once env ty in
-        (* This call used to be inlined, but there seems no reason for it.
-           Message was referring to change in rev. 1.58 of the CVS repo. *)
-        occur_rec env allow_recursive visited ty0 ty'
+        if is_fully_injective env p then
+          iter_type_expr (occur_rec env allow_recursive visited ty0) ty
+        else
+          let ty' = try_expand_head try_expand_once env ty in
+          occur_rec env allow_recursive visited ty0 ty'
       with Cannot_expand ->
         raise Occur
       end
@@ -1876,19 +1924,38 @@ let type_changed = ref false (* trace possible changes to the studied type *)
 let merge r b = if b then r := true
 
 let occur env ty0 ty =
+  let counter =
+    match get_desc ty0 with
+    | Tvar (Some "subst_stub") ->
+       "occur_subst"
+    | Tvar _ when get_level ty0 = generic_level && get_level ty = generic_level ->
+       (* Printexc.get_callstack 20 |> Printexc.print_raw_backtrace stderr; *)
+       "occur_gen"
+    | Tvar _ ->
+       "occur_var"
+    | _ ->
+       (*
+       Format.eprintf "other: %a@." !Btype.print_raw ty0;
+       Printexc.get_callstack 20 |> Printexc.print_raw_backtrace stderr;
+       *)
+       "occur_other"
+  in
+  incr_counter counter;
   let allow_recursive = allow_recursive_equations () in
-  let old = !type_changed in
-  try
-    while
-      type_changed := false;
-      if not (eq_type ty0 ty) then
-        occur_rec env allow_recursive TypeSet.empty ty0 ty;
-      !type_changed
-    do () (* prerr_endline "changed" *) done;
-    merge type_changed old
-  with exn ->
-    merge type_changed old;
-    raise exn
+  try occur_fast env allow_recursive ty0 ty
+  with Occur ->
+    let old = !type_changed in
+    try
+      while
+        type_changed := false;
+        if not (eq_type ty0 ty) then
+          occur_rec env allow_recursive TypeSet.empty ty0 ty;
+        !type_changed
+      do () (* prerr_endline "changed" *) done;
+      merge type_changed old
+    with exn ->
+      merge type_changed old;
+      raise exn
 
 let occur_for tr_exn env t1 t2 =
   try
@@ -2665,6 +2732,7 @@ let unify_eq t1 t2 =
       && TypePairs.mem unify_eq_set (order_type_pair t1 t2))
 
 let unify1_var env t1 t2 =
+  incr_counter "unify1_var";
   assert (is_Tvar t1);
   occur_for Unify env t1 t2;
   match occur_univar_for Unify env t2 with
@@ -3262,6 +3330,8 @@ let unify_gadt ~equations_level:lev ~allow_recursive_equations
     raise e
 
 let unify_var env t1 t2 =
+  incr_counter "unify_var";
+  (* Printexc.get_callstack 20 |> Printexc.print_raw_backtrace stderr; Printf.eprintf "@."; *)
   if eq_type t1 t2 then () else
   match get_desc t1, get_desc t2 with
     Tvar _, Tconstr _ when deep_occur t1 t2 ->
@@ -3290,6 +3360,7 @@ let unify_pairs env ty1 ty2 pairs =
   unify env ty1 ty2
 
 let unify env ty1 ty2 =
+  incr_counter "unify";
   unify_pairs (ref env) ty1 ty2 []
 
 
