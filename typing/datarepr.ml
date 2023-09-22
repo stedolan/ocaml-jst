@@ -47,11 +47,7 @@ let free_vars ?(param=false) ty =
 let newgenconstr path tyl = newgenty (Tconstr (path, tyl, ref Mnil))
 
 let constructor_existentials cd_args cd_res =
-  let tyl =
-    match cd_args with
-    | Cstr_tuple l -> List.map (fun (ty, _) -> ty) l
-    | Cstr_record l -> List.map (fun l -> l.ld_type) l
-  in
+  let tyl = tys_of_constr_args cd_args in
   let existentials =
     match cd_res with
     | None -> []
@@ -70,11 +66,16 @@ let constructor_args ~current_unit priv cd_args cd_res path rep =
       let arg_vars_set = free_vars ~param:true (newgenty (Ttuple tyl)) in
       let type_params = TypeSet.elements arg_vars_set in
       let arity = List.length type_params in
+      let is_void_label lbl = Layout.is_void_defaulting lbl.ld_layout in
+      let layout =
+        Layout.for_boxed_record ~all_void:(List.for_all is_void_label lbls)
+      in
       let tdecl =
         {
           type_params;
           type_arity = arity;
           type_kind = Type_record (lbls, rep);
+          type_layout = layout;
           type_private = priv;
           type_manifest = None;
           type_variance = Variance.unknown_signature ~injective:true ~arity;
@@ -97,9 +98,9 @@ let constructor_descrs ~current_unit ty_path decl cstrs rep =
     match rep with
     | Variant_extensible -> assert false
     | Variant_boxed layouts -> layouts
-    | Variant_unboxed layout -> [| [| layout |] |]
+    | Variant_unboxed -> [| [| decl.type_layout |] |]
   in
-  let all_void layouts = Array.for_all Layout.is_void layouts in
+  let all_void layouts = Array.for_all Layout.is_void_defaulting layouts in
   let num_consts = ref 0 and num_nonconsts = ref 0 in
   let cstr_constant =
     Array.map
@@ -192,9 +193,9 @@ let none =
 let dummy_label =
   { lbl_name = ""; lbl_res = none; lbl_arg = none;
     lbl_mut = Immutable; lbl_global = Unrestricted;
-    lbl_layout = Layout.any;
+    lbl_layout = Layout.any ~why:Dummy_layout;
     lbl_num = -1; lbl_pos = -1; lbl_all = [||];
-    lbl_repres = Record_unboxed Layout.any;
+    lbl_repres = Record_unboxed;
     lbl_private = Public;
     lbl_loc = Location.none;
     lbl_attributes = [];
@@ -206,7 +207,7 @@ let label_descrs ty_res lbls repres priv =
   let rec describe_labels num pos = function
       [] -> []
     | l :: rest ->
-        let is_void = Layout.is_void l.ld_layout  in
+        let is_void = Layout.is_void_defaulting l.ld_layout  in
         let lbl =
           { lbl_name = Ident.name l.ld_id;
             lbl_res = ty_res;
@@ -248,11 +249,11 @@ let constructors_of_type ~current_unit ty_path decl =
   match decl.type_kind with
   | Type_variant (cstrs,rep) ->
      constructor_descrs ~current_unit ty_path decl cstrs rep
-  | Type_record _ | Type_abstract _ | Type_open -> []
+  | Type_record _ | Type_abstract | Type_open -> []
 
 let labels_of_type ty_path decl =
   match decl.type_kind with
   | Type_record(labels, rep) ->
       label_descrs (newgenconstr ty_path decl.type_params)
         labels rep decl.type_private
-  | Type_variant _ | Type_abstract _ | Type_open -> []
+  | Type_variant _ | Type_abstract | Type_open -> []

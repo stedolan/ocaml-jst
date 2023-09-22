@@ -51,7 +51,7 @@ type type_structure =
 let structure : type_definition -> type_structure = fun def ->
   match def.type_kind with
   | Type_open -> Open
-  | Type_abstract _ ->
+  | Type_abstract ->
       begin match def.type_manifest with
       | None -> Abstract
       | Some type_expr -> Synonym type_expr
@@ -471,7 +471,7 @@ let worst_msig decl = List.map (fun _ -> Deepsep) decl.type_params
 
     Note: this differs from {!Types.Separability.default_signature},
     which does not have access to the declaration and its immediacy. *)
-(* CR layouts v2: At the moment things that are not value are certainly
+(* CR layouts v2.8: At the moment things that are not value are certainly
    separable: they must be any or void, and there are no runtime values
    of either of those things.  So, we put the same exception here for them
    as is described above for immediate.  But check whether we still believe
@@ -479,10 +479,11 @@ let worst_msig decl = List.map (fun _ -> Deepsep) decl.type_params
    array optimization and this entire file at that point. *)
 let msig_of_external_type env decl =
   let check_layout =
-    Ctype.check_decl_layout ~reason:Dummy_reason_result_ignored env decl
+    Ctype.check_decl_layout env decl
   in
-  if Result.is_error (check_layout Layout.value)
-     || Result.is_ok (check_layout Layout.immediate64)
+  if Result.is_error (check_layout (Layout.value ~why:Separability_check))
+     || Result.is_ok
+          (check_layout (Layout.immediate64 ~why:Separability_check))
   then best_msig decl
   else worst_msig decl
 

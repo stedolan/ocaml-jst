@@ -29,8 +29,6 @@ exception Escape of type_expr Errortrace.escape
 exception Tags of label * label
 exception Cannot_expand
 exception Cannot_apply
-exception Matches_failure of Env.t * Errortrace.unification_error
-  (* Raised from [matches], hence the odd name *)
 exception Incompatible
   (* Raised from [mcomp] *)
 
@@ -179,10 +177,10 @@ val instance_label:
         bool -> label_description -> type_expr list * type_expr * type_expr
         (* Same, for a label *)
 val prim_mode :
-        alloc_mode option -> (Primitive.mode * Primitive.native_repr)
-        -> alloc_mode
+        Mode.Locality.t option -> (Primitive.mode * Primitive.native_repr)
+        -> Mode.Locality.t
 val instance_prim_mode:
-        Primitive.description -> type_expr -> type_expr * alloc_mode option
+        Primitive.description -> type_expr -> type_expr * Mode.Locality.t option
 
 val apply:
         Env.t -> type_expr list -> type_expr -> type_expr list -> type_expr
@@ -245,8 +243,17 @@ val unify_delaying_layout_checks :
            typedecl before well-foundedness checks have made layout checking
            safe. *)
 
+type filtered_arrow =
+  { ty_arg : type_expr;
+    arg_mode : Mode.Alloc.t;
+    arg_sort : sort;
+    ty_ret : type_expr;
+    ret_mode : Mode.Alloc.t;
+    ret_sort : sort
+  }
+
 val filter_arrow: Env.t -> type_expr -> arg_label -> force_tpoly:bool ->
-                  alloc_mode * type_expr * alloc_mode * type_expr
+                  filtered_arrow
         (* A special case of unification (with l:'a -> 'b). If
            [force_poly] is false then the usual invariant that the
            argument type be a [Tpoly] node is not enforced. Raises
@@ -255,8 +262,7 @@ val filter_mono: type_expr -> type_expr
         (* A special case of unification (with Tpoly('a, [])). Can
            only be called on [Tpoly] nodes. Raises [Filter_mono_failed]
            instead of [Unify] *)
-val filter_arrow_mono: Env.t -> type_expr -> arg_label ->
-                  alloc_mode * type_expr * alloc_mode * type_expr
+val filter_arrow_mono: Env.t -> type_expr -> arg_label -> filtered_arrow
         (* A special case of unification. Composition of [filter_arrow]
            with [filter_mono] on the argument type. Raises
            [Filter_arrow_mono_failed] instead of [Unify] *)
@@ -264,21 +270,28 @@ val filter_method: Env.t -> string -> type_expr -> type_expr
         (* A special case of unification (with {m : 'a; 'b}).  Raises
            [Filter_method_failed] instead of [Unify]. *)
 val occur_in: Env.t -> type_expr -> type_expr -> bool
+val deep_occur_list: type_expr -> type_expr list -> bool
+        (* Check whether a type occurs structurally within any type from
+           a list of types. *)
 val deep_occur: type_expr -> type_expr -> bool
+        (* Check whether a type occurs structurally within another. *)
 val moregeneral: Env.t -> bool -> type_expr -> type_expr -> unit
         (* Check if the first type scheme is more general than the second. *)
 val is_moregeneral: Env.t -> bool -> type_expr -> type_expr -> bool
-val rigidify: type_expr -> type_expr list
-        (* "Rigidify" a type and return its type variable *)
 val all_distinct_vars: Env.t -> type_expr list -> bool
         (* Check those types are all distinct type variables *)
-val matches: expand_error_trace:bool -> Env.t -> type_expr -> type_expr -> unit
+
+type matches_result =
+  | Unification_failure of Errortrace.unification_error
+  | Layout_mismatch of { original_layout : layout; inferred_layout : layout
+                       ; ty : type_expr }
+  | All_good
+val matches: expand_error_trace:bool -> Env.t ->
+  type_expr -> type_expr -> matches_result
         (* Same as [moregeneral false], implemented using the two above
            functions and backtracking. Ignore levels. The [expand_error_trace]
            flag controls whether the error raised performs expansion; this
            should almost always be [true]. *)
-val does_match: Env.t -> type_expr -> type_expr -> bool
-        (* Same as [matches], but returns a [bool] *)
 
 val reify_univars : Env.t -> Types.type_expr -> Types.type_expr
         (* Replaces all the variables of a type by a univar. *)
@@ -293,6 +306,7 @@ type filter_arrow_failure =
       ; expected_type : type_expr
       }
   | Not_a_function
+  | Layout_error of type_expr * Layout.Violation.t
 
 exception Filter_arrow_failed of filter_arrow_failure
 
@@ -303,7 +317,7 @@ type filter_method_failure =
   | Unification_error of Errortrace.unification_error
   | Not_a_method
   | Not_an_object of type_expr
-  | Not_a_value of Layout.Violation.violation
+  | Not_a_value of Layout.Violation.t
 
 exception Filter_method_failed of filter_method_failure
 
@@ -430,7 +444,11 @@ val nongen_class_declaration: class_declaration -> bool
            Uses the empty environment.  *)
 
 val free_variables: ?env:Env.t -> type_expr -> type_expr list
-        (* If env present, then check for incomplete definitions too *)
+        (* If env present, then check for incomplete definitions too;
+           returns both normal variables and row variables*)
+val free_non_row_variables_of_list: type_expr list -> type_expr list
+        (* gets only non-row variables *)
+
 val closed_type_decl: type_declaration -> type_expr option
 val closed_extension_constructor: extension_constructor -> type_expr option
 val closed_class:
@@ -478,13 +496,16 @@ val tvariant_not_immediate : row_desc -> bool
 (* Cheap upper bound on layout.  Will not expand unboxed types - call
    [type_layout] if that's needed. *)
 val estimate_type_layout : Env.t ->  type_expr -> layout
+
+(* Get the layout of a type, expanding it and looking through [[@@unboxed]]
+   types. *)
 val type_layout : Env.t -> type_expr -> layout
 
 (* Find a type's sort (constraining it to be an arbitrary sort variable, if
    needed) *)
 val type_sort :
-  reason:Layouts.Layout.concrete_layout_reason ->
-  Env.t -> type_expr -> (sort, Layout.Violation.violation) result
+  why:Layouts.Layout.concrete_layout_reason ->
+  Env.t -> type_expr -> (sort, Layout.Violation.t) result
 
 (* Layout checking. [constrain_type_layout] will update the layout of type
    variables to make the check true, if possible.  [check_decl_layout] and
@@ -493,22 +514,21 @@ val type_sort :
 (* CR layouts: When we improve errors, it may be convenient to change these to
    raise on error, like unify. *)
 val check_decl_layout :
-  reason:Layouts.Layout.reason
-  -> Env.t -> type_declaration -> layout
-  -> (unit, Layout.Violation.violation) result
+  Env.t -> type_declaration -> layout -> (unit, Layout.Violation.t) result
 val check_type_layout :
-  reason:Layouts.Layout.reason
-  -> Env.t -> type_expr -> layout
-  -> (unit, Layout.Violation.violation) result
+  Env.t -> type_expr -> layout -> (unit, Layout.Violation.t) result
 val constrain_type_layout :
-  reason:Layouts.Layout.reason
-  -> Env.t -> type_expr -> layout
-  -> (unit, Layout.Violation.violation) result
+  Env.t -> type_expr -> layout -> (unit, Layout.Violation.t) result
 
-(* True if a type is always global (i.e., it mode crosses for local).  This is
-   true for all immediate and immediate64 types.  To make it sound for
-   immediate64, we've disabled stack allocation on 32-bit builds. *)
-val is_always_global : Env.t -> type_expr -> bool
+(* False if running in principal mode and the type is not principal.
+   True otherwise. *)
+val is_principal : type_expr -> bool
+
+(* True if a type is immediate. *)
+val is_immediate : Env.t -> type_expr -> bool
+
+(* True if a type can cross to the minimum on all mode axes. *)
+val mode_cross : Env.t -> type_expr -> bool
 
 (* For use with ocamldebug *)
 type global_state

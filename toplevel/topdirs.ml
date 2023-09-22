@@ -233,7 +233,7 @@ let printer_type ppf typename =
 
 let match_simple_printer_type desc printer_type =
   Ctype.begin_def();
-  let ty_arg = Ctype.newvar Layout.value in
+  let ty_arg = Ctype.newvar (Layout.value ~why:Debug_printer_argument) in
   begin try
     Ctype.unify !toplevel_env
       (Ctype.newconstr printer_type [ty_arg])
@@ -247,7 +247,10 @@ let match_simple_printer_type desc printer_type =
 
 let match_generic_printer_type desc path args printer_type =
   Ctype.begin_def();
-  let args = List.map (fun _ -> Ctype.newvar Layout.value) args in
+  let args = List.map
+               (fun _ -> Ctype.newvar
+                           (Layout.value ~why:Debug_printer_argument))
+               args in
   let ty_target = Ctype.newty (Tconstr (path, args, ref Mnil)) in
   let ty_args =
     List.map (fun ty_var -> Ctype.newconstr printer_type [ty_var]) args in
@@ -255,7 +258,7 @@ let match_generic_printer_type desc path args printer_type =
     List.fold_right
       (fun ty_arg ty ->
          let arrow_desc =
-           Asttypes.Nolabel,Alloc_mode.global,Alloc_mode.global
+           Asttypes.Nolabel,Mode.Alloc.legacy,Mode.Alloc.legacy
          in
          Ctype.newty
            (Tarrow (arrow_desc, Ctype.newmono ty_arg, ty, commu_var ())))
@@ -416,7 +419,7 @@ let reg_show_prim name to_sig doc =
 let () =
   reg_show_prim "show_val"
     (fun env loc id lid ->
-       let _path, desc, _ = Env.lookup_value ~loc lid env in
+       let _path, desc, _, _ = Env.lookup_value ~loc lid env in
        [ Sig_value (id, desc, Exported) ]
     )
     "Print the signature of the corresponding value."
@@ -574,7 +577,7 @@ let () =
                (if secretly_the_same_path env path new_path
                 then acc
                 else def Trec_not :: acc)
-         | Mty_ident _ | Mty_signature _ | Mty_functor _ ->
+         | Mty_ident _ | Mty_signature _ | Mty_functor _ | Mty_strengthen _ ->
              List.rev (def (is_rec_module id md) :: acc)
        in
        accum_aliases path md []
@@ -598,7 +601,7 @@ let () =
                (if secretly_the_same_path env path new_path
                 then acc
                 else def :: acc)
-         | None | Some (Mty_alias _ | Mty_signature _ | Mty_functor _) ->
+         | None | Some (Mty_alias _ | Mty_signature _ | Mty_functor _ | Mty_strengthen _) ->
              List.rev (def :: acc)
        in
        accum_defs path mtd []

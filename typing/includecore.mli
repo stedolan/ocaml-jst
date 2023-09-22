@@ -47,11 +47,7 @@ type privacy_mismatch =
   | Private_extensible_variant
   | Private_row_type
 
-type locality_mismatch =
-  { order : position
-  ; nonlocal : bool
-  (* whether expected mode is nonlocal or global *)
-  }
+type locality_mismatch = { order : position }
 
 type label_mismatch =
   | Type of Errortrace.equality_error
@@ -65,6 +61,7 @@ type record_mismatch =
   | Label_mismatch of record_change list
   | Inlined_representation of position
   | Float_representation of position
+  | Ufloat_representation of position
 
 type constructor_mismatch =
   | Type of Errortrace.equality_error
@@ -108,7 +105,7 @@ type type_mismatch =
   | Variant_mismatch of variant_change list
   | Unboxed_representation of position * attributes
   | Extensible_representation of position
-  | Layout of Layout.Violation.violation
+  | Layout of Layout.Violation.t
 
 val value_descriptions:
   loc:Location.t -> Env.t -> string ->

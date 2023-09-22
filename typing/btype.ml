@@ -325,7 +325,7 @@ let map_type_expr_cstr_args f = function
       Cstr_record (List.map (fun d -> {d with ld_type=f d.ld_type}) lbls)
 
 let iter_type_expr_kind f = function
-  | Type_abstract _ -> ()
+  | Type_abstract -> ()
   | Type_variant (cstrs, _) ->
       List.iter
         (fun cd ->
@@ -384,6 +384,9 @@ let type_iterators =
     | Mty_functor (p, mt) ->
         it.it_functor_param it p;
         it.it_module_type it mt
+    | Mty_strengthen (mty, p, _) ->
+        it.it_module_type it mty;
+        it.it_path p
   and it_class_type it = function
       Cty_constr (p, tyl, cty) ->
         it.it_path p;
